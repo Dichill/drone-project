@@ -1,37 +1,64 @@
+import picamera2  # camera module for RPi camera
+from picamera2 import Picamera2
+from picamera2.encoders import JpegEncoder, H264Encoder
+from picamera2.outputs import FileOutput, FfmpegOutput
+import io
+
+import subprocess
 from flask import Flask, Response
-import cv2
+from flask_restful import Resource, Api, reqparse, abort
+import atexit
+from datetime import datetime
+from threading import Condition
+import time
 
 app = Flask(__name__)
-
-# Initialize the camera (0 for the default camera, increase if you have multiple cameras)
-camera = cv2.VideoCapture(0)
+api = Api(app)
 
 
-@app.route("/")
-def index():
-    return "Camera Streaming: Visit /video_feed to view the live stream"
+class StreamingOutput(io.BufferedIOBase):
+    def __init__(self):
+        self.frame = None
+        self.condition = Condition()
+
+    def write(self, buf):
+        with self.condition:
+            self.frame = buf
+            self.condition.notify_all()
 
 
-@app.route("/video_feed")
-def video_feed():
-    def generate():
+# defines the function that generates our frames
+def genFrames():
+    with picamera2.Picamera2() as camera:
+        camera.configure(camera.create_video_configuration(main={"size": (640, 480)}))
+        encoder = JpegEncoder()
+        output1 = FfmpegOutput("test2.mp4", audio=False)
+        output3 = StreamingOutput()
+        output2 = FileOutput(output3)
+        encoder.output = [output1, output2]
+
+        camera.start_encoder(encoder)
+        camera.start()
+        output1.start()
+        time.sleep(20)
+        output1.stop()
+        print("done")
         while True:
-            # Read a single frame from the camera
-            success, frame = camera.read()
-            if not success:
-                break
-            else:
-                # Encode the frame as JPEG
-                _, buffer = cv2.imencode(".jpg", frame)
-                frame_data = buffer.tobytes()
-                # Yield the frame in a multipart response format
-                yield (
-                    b"--frame\r\n"
-                    b"Content-Type: image/jpeg\r\n\r\n" + frame_data + b"\r\n"
-                )
+            with output3.condition:
+                output3.condition.wait()
+            frame = output3.frame
+            yield (b"--frame\r\n" b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n")
 
-    return Response(generate(), mimetype="multipart/x-mixed-replace; boundary=frame")
 
+# defines the route that will access the video feed and call the feed function
+class video_feed(Resource):
+    def get(self):
+        return Response(
+            genFrames(), mimetype="multipart/x-mixed-replace; boundary=frame"
+        )
+
+
+api.add_resource(video_feed, "/cam")
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    app.run(debug=False, host="0.0.0.0", port=5000)
