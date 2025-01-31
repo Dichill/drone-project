@@ -7,26 +7,28 @@ app = Flask(__name__)
 
 # Camera initialization with Arducam IMX708 specific settings
 def init_camera():
-    # Use libcamera's V4L2 compatibility layer
-    camera = cv2.VideoCapture(
-        "libcamerasrc ! video/x-raw,width=1920,height=1080 ! videoconvert ! appsink",
-        cv2.CAP_GSTREAMER,
+    # Libcamera-specific GStreamer pipeline for IMX708
+    pipeline = (
+        "libcamerasrc ! "
+        "video/x-raw,width=1920,height=1080,framerate=30/1 ! "
+        "videoconvert ! "
+        "video/x-raw,format=BGR ! "
+        "appsink drop=1"
     )
 
-    if not camera.isOpened():
-        # Fallback to traditional V4L2 with buffer size adjustment
-        camera = cv2.VideoCapture(0)
-        camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Reduce buffer to minimize latency
-        camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-        camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
-        camera.set(cv2.CAP_PROP_FPS, 15)  # Start with lower FPS
+    camera = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
 
-    # Additional diagnostic checks
     if not camera.isOpened():
-        raise RuntimeError("Cannot open camera - check libcamera setup")
+        raise RuntimeError(
+            """
+        Failed to open camera. Ensure:
+        1. Camera is enabled in raspi-config
+        2. libcamera-dev is installed: sudo apt install libcamera-dev
+        3. GStreamer plugins are installed: sudo apt install gstreamer1.0-plugins-bad
+        """
+        )
 
-    print(f"Camera initialized: {camera.getBackendName()}")
-    time.sleep(2)  # Warm-up time
+    print(f"Camera initialized via {camera.getBackendName()} with libcamera pipeline")
     return camera
 
 
