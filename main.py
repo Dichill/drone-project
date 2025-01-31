@@ -1,35 +1,42 @@
 from flask import Flask, Response
 import cv2
 import time
+import os
 
 app = Flask(__name__)
 
 
-# Camera initialization with Arducam IMX708 specific settings
+def list_video_devices():
+    """List all available video devices using v4l2-ctl"""
+    print("Checking video devices with v4l2-ctl...")
+    os.system("v4l2-ctl --list-devices")
+
+
 def init_camera():
-    # Libcamera-specific GStreamer pipeline for IMX708
-    pipeline = (
-        "libcamerasrc ! "
-        "video/x-raw,width=1920,height=1080,framerate=30/1 ! "
-        "videoconvert ! "
-        "video/x-raw,format=BGR ! "
-        "appsink drop=1"
-    )
+    """Initialize camera using libcamera's V4L2 compatibility layer"""
+    # Try different device indices for libcamera-v4l2
+    for index in [0, 2, 4]:  # Common libcamera device indices
+        try:
+            camera = cv2.VideoCapture(index)
+            camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-    camera = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+            if camera.isOpened() and camera.read()[0]:
+                print(f"Found camera at index {index}")
+                return camera
+        except:
+            continue
 
-    if not camera.isOpened():
-        raise RuntimeError(
-            """
-        Failed to open camera. Ensure:
-        1. Camera is enabled in raspi-config
-        2. libcamera-dev is installed: sudo apt install libcamera-dev
-        3. GStreamer plugins are installed: sudo apt install gstreamer1.0-plugins-bad
+    raise RuntimeError(
         """
-        )
-
-    print(f"Camera initialized via {camera.getBackendName()} with libcamera pipeline")
-    return camera
+    No camera found. Required setup:
+    1. Enable camera in raspi-config (Interface Options > Camera)
+    2. Install libcamera-v4l2: sudo apt install libcamera-v4l2
+    3. Load driver: sudo modprobe bcm2835-v4l2
+    4. Reboot and verify with: v4l2-ctl --list-devices
+    """
+    )
 
 
 camera = init_camera()
@@ -73,4 +80,6 @@ def video_feed():
 
 
 if __name__ == "__main__":
+    print("Available video devices:")
+    os.system("ls -l /dev/video*")
     app.run(host="0.0.0.0", port=5000, debug=False)
