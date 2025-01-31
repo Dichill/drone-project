@@ -7,19 +7,26 @@ app = Flask(__name__)
 
 # Camera initialization with Arducam IMX708 specific settings
 def init_camera():
-    camera = cv2.VideoCapture(0)
-
-    # Set camera parameters for Arducam IMX708
-    camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)  # Max width for IMX708
-    camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)  # Max height for IMX708
-    camera.set(cv2.CAP_PROP_FPS, 30)  # Set frame rate
-    camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-
-    # Allow extra time for camera initialization
-    time.sleep(2)  # Important for Arducam initialization
+    # Use libcamera's V4L2 compatibility layer
+    camera = cv2.VideoCapture(
+        "libcamerasrc ! video/x-raw,width=1920,height=1080 ! videoconvert ! appsink",
+        cv2.CAP_GSTREAMER,
+    )
 
     if not camera.isOpened():
-        raise RuntimeError("Could not open camera")
+        # Fallback to traditional V4L2 with buffer size adjustment
+        camera = cv2.VideoCapture(0)
+        camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Reduce buffer to minimize latency
+        camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+        camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+        camera.set(cv2.CAP_PROP_FPS, 15)  # Start with lower FPS
+
+    # Additional diagnostic checks
+    if not camera.isOpened():
+        raise RuntimeError("Cannot open camera - check libcamera setup")
+
+    print(f"Camera initialized: {camera.getBackendName()}")
+    time.sleep(2)  # Warm-up time
     return camera
 
 
