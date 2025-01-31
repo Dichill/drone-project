@@ -34,6 +34,7 @@ def index():
 @app.route("/video_feed")
 def video_feed():
     def generate():
+        global camera
         while True:
             try:
                 success, frame = camera.read()
@@ -41,7 +42,6 @@ def video_feed():
                     print("Frame read failed, reinitializing camera...")
                     camera.release()
                     time.sleep(1)
-                    global camera
                     camera = init_camera()
                     continue
 
