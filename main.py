@@ -12,6 +12,9 @@ from datetime import datetime
 from threading import Condition
 import time
 
+import cv2
+import numpy as np
+
 app = Flask(__name__)
 api = Api(app)
 
@@ -29,7 +32,7 @@ class StreamingOutput(io.BufferedIOBase):
 
 # defines the function that generates our frames
 def genFrames():
-    with picamera2.Picamera2() as camera:
+    with Picamera2() as camera:
         camera.configure(camera.create_video_configuration(main={"size": (640, 480)}))
         encoder = JpegEncoder()
         output1 = FfmpegOutput("temp.mp4", audio=False)
@@ -43,10 +46,34 @@ def genFrames():
         time.sleep(20)
         output1.stop()
         print("done")
+
+        # Initialize ArUco detector
+        aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+        parameters = cv2.aruco.DetectorParameters()
+
         while True:
             with output3.condition:
                 output3.condition.wait()
-            frame = output3.frame
+                frame = output3.frame
+
+            if frame:
+                img_array = np.frombuffer(frame, dtype=np.uint8)
+                img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+
+                # Detect ArUco markers
+                corners, ids, rejected = cv2.aruco.detectMarkers(
+                    img, aruco_dict, parameters=parameters
+                )
+
+                # Draw detected markers
+                if ids is not None:
+                    cv2.aruco.drawDetectedMarkers(img, corners, ids)
+
+                # Convert back to JPEG
+                ret, jpeg = cv2.imencode(".jpg", img)
+                if ret:
+                    frame = jpeg.tobytes()
+
             yield (b"--frame\r\n" b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n")
 
 
