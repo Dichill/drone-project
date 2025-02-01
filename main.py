@@ -33,40 +33,72 @@ class StreamingOutput(io.BufferedIOBase):
 # defines the function that generates our frames
 def genFrames():
     with Picamera2() as camera:
-        camera.configure(camera.create_video_configuration(main={"size": (640, 480)}))
-        encoder = JpegEncoder()
-        output1 = FfmpegOutput("temp.mp4", audio=False)
+        # Configure for raw sensor output instead of JPEG
+        config = camera.create_video_configuration(
+            main={"size": (640, 480)}, encode="raw"
+        )
+        camera.configure(config)
+
+        # Create separate output for streaming
         output3 = StreamingOutput()
+        encoder = JpegEncoder()
         output2 = FileOutput(output3)
-        encoder.output = [output1, output2]
+        encoder.output = [output2]
 
         camera.start_encoder(encoder)
         camera.start()
-        output1.start()
-        time.sleep(20)
-        output1.stop()
-        print("done")
-        while True:
-            with output3.condition:
-                output3.condition.wait()
-                frame = output3.frame
 
-            if frame:
-                # Convert JPEG bytes to numpy array
+        # Initialize ArUco detector once
+        aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+        parameters = cv2.aruco.DetectorParameters()
+
+        try:
+            while True:
+                with output3.condition:
+                    output3.condition.wait()
+                    frame = output3.frame
+
+                if frame is None:
+                    continue  # Skip empty frames
+
+                # Convert to numpy array with bounds checking
                 img_array = np.frombuffer(frame, dtype=np.uint8)
+                if img_array.size == 0:
+                    continue
 
-                # Decode image using OpenCV
+                # Decode with error checking
                 img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+                if img is None:
+                    continue
 
-                # Example processing: Convert to grayscale
-                processed = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                try:
+                    # Detect markers with safety checks
+                    corners, ids, rejected = cv2.aruco.detectMarkers(
+                        img, aruco_dict, parameters=parameters
+                    )
 
-                # Convert back to JPEG bytes
-                ret, jpeg = cv2.imencode(".jpg", processed)
-                if ret:
+                    if ids is not None:
+                        cv2.aruco.drawDetectedMarkers(img, corners, ids)
+                except cv2.error as e:
+                    print(f"OpenCV error: {e}")
+                    continue
+
+                # Encode with quality check
+                ret, jpeg = cv2.imencode(
+                    ".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 85]
+                )
+                if ret and jpeg is not None:
                     frame = jpeg.tobytes()
+                else:
+                    frame = b""  # Fallback empty frame
 
-            yield (b"--frame\r\n" b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n")
+                yield (
+                    b"--frame\r\n" b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
+                )
+
+        finally:
+            camera.stop_encoder()
+            camera.stop()
 
 
 # defines the route that will access the video feed and call the feed function
